@@ -1,110 +1,116 @@
+import os
 import numpy as np
-from itertools import count
+import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.distributions import Categorical
-
-from agents.agent import Agent
+import torch.autograd as autograd
+from torch.autograd import Variable
 from task import Task
+from agents.agent import ActorCritic
 
-num_episodes = 10
-target_pos = np.array([0., 0., 10.])
+
+# Discount factor. Model is not very sensitive to this value.
+GAMMA = .95
+
+# LR of 3e-2 explodes the gradients, LR of 3e-4 trains slower
+LR = 3e-3
+N_GAMES = 2000
+
+# OpenAI baselines uses nstep of 5.
+N_STEPS = 20
+
+#env = gym.make('CartPole-v0')
+target_pos = np.array([0., 0., 10., 0., 0., 0.])
 env = Task(target_pos=target_pos)
 
 
-gamma = .99
-seed = 123
-log_interval = 10
+N_ACTIONS = 2 # get from env
+N_INPUTS = 4 # get from env
 
-torch.manual_seed(seed)
+model = ActorCritic()
+optimizer = optim.Adam(model.parameters(), lr=LR)
 
 
-class Policy(nn.Module):
-    def __init__(self):
-        super(Policy, self).__init__()
-        #self.affine1 = nn.Linear(4, 128)
-        self.affine1 = nn.Linear(6, 128)
-        self.affine2 = nn.Linear(128,6)
-
-        self.saved_log_probs = []
-        self.rewards = []
-
-    def forward(self, x):
-        x = F.relu(self.affine1(x))
-        action_scores = self.affine2(x)
-
-        r = F.softmax(action_scores, dim=1)
-        print(r)
-
-        return r
+state = env.reset()
+finished_games = 0
 
 
 
-policy = Policy()
-optimizer = optim.Adam(policy.parameters(), lr=1e-2)
-eps = np.finfo(np.float32).eps.item()
+
+def calc_actual_state_values(rewards, dones):
+    R = []
+    rewards.reverse()
+
+    # If we happen to end the set on a terminal state, set next return to zero
+    if dones[-1] == True:
+        next_return = 0
+
+    # If not terminal state, bootstrap v(s) using our critic
+    # TODO: don't need to estimate again, just take from last value of v(s) estimates
+    else:
+        s = torch.from_numpy(states[-1]).float().unsqueeze(0)
+        next_return = model.get_state_value(Variable(s)).data[0][0]
+
+        # Backup from last state to calculate "true" returns for each state in the set
+    R.append(next_return)
+    dones.reverse()
+    for r in range(1, len(rewards)):
+        if not dones[r]:
+            this_return = rewards[r] + next_return * GAMMA
+        else:
+            this_return = 0
+        R.append(this_return)
+        next_return = this_return
+
+    R.reverse()
+    state_values_true = Variable(torch.FloatTensor(R)).unsqueeze(1)
+
+    return state_values_true
 
 
-def select_action(state):
-    state = torch.from_numpy(state).float().unsqueeze(0)
-    print("s", state)
+def reflect(states, actions, rewards, dones):
+    # Calculating the ground truth "labels" as described above
+    state_values_true = calc_actual_state_values(rewards, dones)
 
-    probs = policy(state)
-    print("p", probs)
-    m = Categorical(probs)
-    action = m.sample()
-    print("a", action)
-    policy.saved_log_probs.append(m.log_prob(action))
-    print("ai", action.item)
-    return action.item()
+    s = Variable(torch.FloatTensor(states))
+    action_probs, state_values_est = model.evaluate_actions(s)
+    action_log_probs = action_probs.log()
 
+    a = Variable(torch.LongTensor(actions).view(-1, 1))
+    chosen_action_log_probs = action_log_probs.gather(1, a)
 
-def finish_episode():
-    R = 0
-    policy_loss = []
-    rewards = []
-    for r in policy.rewards[::-1]:
-        R = r + gamma * R
-        rewards.insert(0, R)
-    rewards = torch.tensor(rewards)
-    rewards = (rewards - rewards.mean()) / (rewards.std() + eps)
-    for log_prob, reward in zip(policy.saved_log_probs, rewards):
-        policy_loss.append(-log_prob * reward)
+    # This is also the TD error
+    advantages = state_values_true - state_values_est
+
+    entropy = (action_probs * action_log_probs).sum(1).mean()
+    action_gain = (chosen_action_log_probs * advantages).mean()
+    value_loss = advantages.pow(2).mean()
+    total_loss = value_loss - action_gain - 0.0001 * entropy
+
     optimizer.zero_grad()
-    policy_loss = torch.cat(policy_loss).sum()
-    policy_loss.backward()
+    total_loss.backward()
+    nn.utils.clip_grad_norm(model.parameters(), 0.5)
     optimizer.step()
-    del policy.rewards[:]
-    del policy.saved_log_probs[:]
 
 
-def main():
-    running_reward = 10
-    for i_episode in count(1):
-        state = env.reset()
+while finished_games < N_GAMES:
+    states, actions, rewards, dones = [], [], [], []
 
-        for t in range(10000):  # Don't infinite loop while learning
-            action = select_action(state)
-            state, reward, done = env.single_step(action)
-            print(done)
+    # Gather training data
+    for i in range(N_STEPS):
+        s = Variable(torch.from_numpy(state).float().unsqueeze(0))
 
-            policy.rewards.append(reward)
-            if done:
-                break
+        action_probs = model.get_action_probs(s)
+        action = action_probs.multinomial(num_samples=10).data[0][0]
+        next_state, reward, done, _ = env.step(action)
 
-        running_reward = running_reward * 0.99 + t * 0.01
-        finish_episode()
-        if i_episode % log_interval == 0:
-            print('Episode {}\tLast length: {:5d}\tAverage length: {:.2f}'.format(
-                i_episode, t, running_reward))
-        if running_reward > env.spec.reward_threshold:
-            print("Solved! Running reward is now {} and "
-                  "the last episode runs to {} time steps!".format(running_reward, t))
-            break
+        states.append(state); actions.append(action); rewards.append(reward); dones.append(done)
 
+        if done: state = env.reset(); finished_games += 1
+        else: state = next_state
 
-if __name__ == '__main__':
-    main()
+    # Reflect on training data
+    reflect(states, actions, rewards, dones)

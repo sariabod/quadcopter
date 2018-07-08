@@ -10,8 +10,6 @@ class PolicySearch_Agent():
         self.action_low = task.action_low
         self.action_high = task.action_high
         self.action_range = self.action_high - self.action_low
-        print(self.state_size)
-        quit()
 
         self.w = np.random.normal(
             size=(self.state_size, self.action_size),  # weights for simple linear policy: state_space x action_space
