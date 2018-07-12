@@ -36,15 +36,43 @@ class LandTask():
         self.target_pos = np.array([0., 0., 0., 0., 0., 0.])
 
         self.loss_func = nn.SmoothL1Loss()
+        self.current_distance = 0
+        self.current_loss = 0
 
     def get_reward(self):
-        """Calculate Huber loss and assign rewards accordingly"""
+        """Calculate Huber loss and Euclidean distance and assign rewards accordingly"""
+        # start at 0 points
+        reward = 0
         pose = torch.FloatTensor(self.sim.pose).to(device)
-        target = state = torch.FloatTensor(self.target_pos).to(device)
+        target = torch.FloatTensor(self.target_pos).to(device)
+
+        distance = torch.dist(pose,target)
         loss = self.loss_func(pose, target)
-        reward = 1 - (loss.item()/100)
 
+        #print('old loss {}'.format(self.current_loss))
+        #print('old distance {}'.format(self.current_distance))
+        #print('new loss {}'.format(loss.item()))
+        #print('new distance {}'.format(distance.item()))
 
+        # give a point for closing the distance or subtract a point for missing
+        if distance.item() < self.current_distance:
+            reward += 1
+            reward = reward + (self.current_distance - distance.item())
+        else:
+            reward -= 1
+            reward = reward - (distance.item() - self.current_distance)
+
+        # give a point for improving loss or subtract a point for missing
+        if loss.item() < self.current_loss:
+            reward += 1
+            reward = reward + (self.current_loss - loss.item())
+        else:
+            reward -= 1
+            reward = reward - (loss.item() - self.current_loss)
+
+        # set loss and distance for next round
+        self.current_loss = loss.item()
+        self.current_distance = distance.item()
 
         #reward = 1.-.3*(abs(self.sim.pose - self.target_pos)).sum()
         return reward
@@ -93,19 +121,38 @@ class TakeOffTask():
         self.action_high = 900
         self.action_size = 4
 
-        # Goal to land safely
+        # Goal to take off straight
         self.target_pos = np.array([0., 0., 10., 0., 0., 0.])
 
         self.loss_func = nn.SmoothL1Loss()
+        self.current_distance = 0
+        self.current_loss = 0
 
     def get_reward(self):
-        """Uses current pose of sim to return reward."""
+        """Calculate Huber loss and Euclidean distance and assign rewards accordingly"""
+        reward = 0
         pose = torch.FloatTensor(self.sim.pose).to(device)
-        target = state = torch.FloatTensor(self.target_pos).to(device)
+        target = torch.FloatTensor(self.target_pos).to(device)
+
+        distance = torch.dist(pose, target)
         loss = self.loss_func(pose, target)
-        reward = 1 - (loss.item()/100)
 
+        #print('old loss {}'.format(self.current_loss))
+        #print('old distance {}'.format(self.current_distance))
+        #print('new loss {}'.format(loss.item()))
+        #print('new distance {}'.format(distance.item()))
 
+        # give a point for closing the distance
+        if distance.item() < self.current_distance:
+            reward += 1
+
+        # give a point for improving loss
+        if loss.item() < self.current_loss:
+            reward += 1
+
+        # set loss and distance for next round
+        self.current_loss = loss.item()
+        self.current_distance = distance.item()
 
         #reward = 1.-.3*(abs(self.sim.pose - self.target_pos)).sum()
         return reward

@@ -1,9 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import numpy as np
 
 from agents.agent import ValueNetwork, PolicyNetwork, OUNoise, ReplayBuffer, ddpg_update
-from task import LandTask
+from task import LandTask, TakeOffTask
+
+import matplotlib.pyplot as plt
 
 use_cuda = torch.cuda.is_available()
 device = torch.device("cuda" if use_cuda else "cpu")
@@ -37,21 +40,27 @@ value_criterion = nn.MSELoss()
 replay_buffer_size = 1000000
 replay_buffer = ReplayBuffer(replay_buffer_size)
 
-max_frames = 1000
-max_steps = 500
-frame_idx = 0
-rewards = []
-steps = []
+episodes = 10001
+steps = 500
+episode = 0
+total_rewards = []
+total_steps = []
 batch_size = 128
+logs = []
 
 env = LandTask()
+#env = TakeOffTask()
 
-while frame_idx < max_frames:
+while episode < episodes:
+    print('starting run {}'.format(episode))
     state = env.reset()
     ou_noise.reset()
     episode_reward = 0
+    episode += 1
+    local_log = []
 
-    for step in range(max_steps):
+
+    for step in range(steps):
         action = policy_net.get_action(state)
         action = ou_noise.get_action(action, step)
         next_state, reward, done = env.step(action)
@@ -62,14 +71,22 @@ while frame_idx < max_frames:
 
         state = next_state
         episode_reward += reward
-        frame_idx += 1
+        local_log.append(reward)
 
-        if frame_idx % 10 == 0:
-            print('episode reward: {}'.format(episode_reward))
-            print('steps: {}'.format(step))
 
         if done:
-            print('iis done')
-            rewards.append(episode_reward)
-            steps.append(step)
+            total_rewards.append(episode_reward)
+            total_steps.append(step)
             break
+    else:
+        print('default {}'.format(episode_reward))
+        total_rewards.append(episode_reward)
+        total_steps.append(step)
+
+
+np.savetxt("landing_rewards.csv", logs, delimiter=",", fmt='%s')
+
+plt.plot(total_rewards)
+plt.savefig('landing_rewards.png')
+plt.plot('landing_steps')
+plt.savefig('landing_steps.png')
