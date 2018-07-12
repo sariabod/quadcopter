@@ -142,13 +142,20 @@ class TakeOffTask():
         #print('new loss {}'.format(loss.item()))
         #print('new distance {}'.format(distance.item()))
 
-        # give a point for closing the distance
         if distance.item() < self.current_distance:
             reward += 1
+            reward = reward + (self.current_distance - distance.item())
+        else:
+            reward -= 1
+            reward = reward - (distance.item() - self.current_distance)
 
-        # give a point for improving loss
+        # give a point for improving loss or subtract a point for missing
         if loss.item() < self.current_loss:
             reward += 1
+            reward = reward + (self.current_loss - loss.item())
+        else:
+            reward -= 1
+            reward = reward - (loss.item() - self.current_loss)
 
         # set loss and distance for next round
         self.current_loss = loss.item()

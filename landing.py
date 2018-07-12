@@ -77,11 +77,13 @@ while episode < episodes:
         if done:
             total_rewards.append(episode_reward)
             total_steps.append(step)
+            logs.append(local_log)
             break
     else:
         print('default {}'.format(episode_reward))
         total_rewards.append(episode_reward)
         total_steps.append(step)
+        logs.append(local_log)
 
 
 np.savetxt("landing_rewards.csv", logs, delimiter=",", fmt='%s')

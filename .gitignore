@@ -2,6 +2,11 @@
 __pycache__/
 *.py[cod]
 *$py.class
+pyvenv.cfg
+pip-selfcheck.json
+bin
+lib
+lib64
 
 # C extensions
 *.so
